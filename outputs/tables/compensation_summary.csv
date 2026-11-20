@@ -1,0 +1,14 @@
+Metric,Value
+Valid sample size,1609.0
+Total survey weight,68809274.98330599
+Weighted weekday mean,7.831072179394363
+Weighted weekend mean,8.661822892735424
+Event A threshold,6.831072179394363
+Event B threshold,9.661822892735424
+N(A),322.0
+N(B),389.0
+N(A intersection B),56.0
+Weighted P(A),0.18760608152947256
+Weighted P(B),0.24341007469614365
+Weighted P(A intersection B),0.038249017211204876
+Weighted P(B | A),0.20387940998168563
