@@ -3,7 +3,7 @@ import numpy as np
 import pandas as pd
 from pathlib import Path
 from scipy.stats import binom
-
+from scipy.stats import binom, hypergeom, chisquare
 WEIGHT_COL = "WTINT2YR"
 
 
@@ -886,5 +886,153 @@ def analyze_sleep_rounding_independence(df):
         ),
         "sample_size": len(data),
         "data": data
+    }
+
+
+def sample_night_owl_counts(df, n=100, repetitions=5000, seed=42):
+    """
+    Repeatedly draw samples without replacement from NHANES
+    and count the number of Night Owls in each sample.
+    """
+
+    if "Night_Owl" not in df.columns:
+        raise ValueError("Night_Owl column is missing.")
+
+    values = pd.to_numeric(df["Night_Owl"], errors="coerce").dropna()
+    values = values.astype(int).to_numpy()
+
+    if not np.isin(values, [0, 1]).all():
+        raise ValueError("Night_Owl must contain only 0 and 1.")
+
+    N = len(values)
+
+    if not 1 <= n <= N:
+        raise ValueError(f"Sample size must be between 1 and {N}.")
+
+    if repetitions < 1:
+        raise ValueError("Repetitions must be positive.")
+
+    rng = np.random.default_rng(seed)
+
+    counts = np.empty(repetitions, dtype=int)
+
+    for i in range(repetitions):
+        sample = rng.choice(values, size=n, replace=False)
+        counts[i] = sample.sum()
+
+    return {
+        "counts": counts,
+        "n": n,
+        "N": N,
+        "p": values.mean(),
+        "total_night_owls": int(values.sum())
+    }
+
+
+def _chi_square_fit(observed, expected, min_expected=5):
+    """
+    Merge adjacent categories until expected frequencies
+    are sufficiently large, then calculate chi-square.
+    """
+
+    obs_groups = []
+    exp_groups = []
+
+    obs_sum = 0
+    exp_sum = 0
+
+    for obs, exp in zip(observed, expected):
+        obs_sum += obs
+        exp_sum += exp
+
+        if exp_sum >= min_expected:
+            obs_groups.append(obs_sum)
+            exp_groups.append(exp_sum)
+            obs_sum = 0
+            exp_sum = 0
+
+    if exp_sum > 0:
+        if exp_groups:
+            obs_groups[-1] += obs_sum
+            exp_groups[-1] += exp_sum
+        else:
+            obs_groups.append(obs_sum)
+            exp_groups.append(exp_sum)
+
+    if len(obs_groups) < 2:
+        return {
+            "chi_square": np.nan,
+            "p_value": np.nan,
+            "degrees_of_freedom": 0,
+            "groups": len(obs_groups)
+        }
+
+    result = chisquare(obs_groups, f_exp=exp_groups)
+
+    return {
+        "chi_square": float(result.statistic),
+        "p_value": float(result.pvalue),
+        "degrees_of_freedom": len(obs_groups) - 1,
+        "groups": len(obs_groups)
+    }
+
+
+def analyze_binomial_fit(sample_result, min_expected=5):
+    """
+    Compare empirical sample counts with:
+    1. Theoretical Binomial distribution
+    2. Exact Hypergeometric distribution for sampling
+       without replacement from the observed dataset.
+    """
+
+    counts = sample_result["counts"]
+    n = sample_result["n"]
+    N = sample_result["N"]
+    p = sample_result["p"]
+    K = sample_result["total_night_owls"]
+
+    repetitions = len(counts)
+    x = np.arange(n + 1)
+
+    # Empirical distribution
+    observed = np.bincount(counts, minlength=n + 1)
+
+    # Theoretical Binomial distribution
+    binomial_probs = binom.pmf(x, n, p)
+    binomial_expected = repetitions * binomial_probs
+
+    # Exact Hypergeometric distribution
+    hypergeom_probs = hypergeom.pmf(x, N, K, n)
+    hypergeom_expected = repetitions * hypergeom_probs
+
+    # Goodness-of-fit diagnostics
+    binomial_test = _chi_square_fit(
+        observed, binomial_expected, min_expected
+    )
+
+    hypergeom_test = _chi_square_fit(
+        observed, hypergeom_expected, min_expected
+    )
+
+    distribution = pd.DataFrame({
+        "Number_of_Night_Owls": x,
+        "Empirical_Probability": observed / repetitions,
+        "Binomial_Probability": binomial_probs,
+        "Hypergeometric_Probability": hypergeom_probs
+    })
+
+    return {
+        "distribution": distribution,
+        "binomial_test": binomial_test,
+        "hypergeometric_test": hypergeom_test,
+        "empirical_mean": counts.mean(),
+        "empirical_variance": counts.var(),
+        "binomial_mean": n * p,
+        "binomial_variance": n * p * (1 - p),
+        "hypergeometric_mean": n * p,
+        "hypergeometric_variance": (
+            n * p * (1 - p) * (N - n) / (N - 1)
+            if N > 1 else np.nan
+        )
     }
 
